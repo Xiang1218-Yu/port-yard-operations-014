@@ -1,5 +1,6 @@
 import express from 'express';
 import { appointments, assignTask, blocks, containerDetail, containers, createContainer, createGateAppointment, createYardTask, dashboard, deleteContainer, deleteGateAppointment, deleteYardTask, editGateAppointment, equipment, gateConflicts, prioritizeTasks, tasks, updateContainer, updateYardTask, voyages, yardHeatmap } from './domain.js';
+import { completeStep, createWave, deleteWave, failStep, listWaves, pauseWave, planWave, retryStep, skipStep, startWave } from './waves.js';
 const app = express(); app.use(express.json());
 app.get('/api/dashboard', (_req, res) => res.json(dashboard()));
 app.get('/api/voyages', (_req, res) => res.json(voyages));
@@ -21,5 +22,15 @@ app.post('/api/tasks', (req, res) => { try { res.status(201).json(createYardTask
 app.patch('/api/tasks/:id', (req, res) => { try { const result = updateYardTask(req.params.id, req.body); if (!result) return res.status(404).json({ message: '作业任务不存在' }); res.json(result); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '更新作业任务失败' }); } });
 app.delete('/api/tasks/:id', (req, res) => { const result = deleteYardTask(req.params.id); if (!result) return res.status(404).json({ message: '作业任务不存在' }); res.json({ deleted: true, id: result.id }); });
 app.patch('/api/tasks/:id/assign', (req, res) => { const result = assignTask(req.params.id, req.body.equipmentId); if (!result) return res.status(404).json({ message: '任务或设备不存在' }); res.json(result); });
+app.get('/api/waves', (_req, res) => res.json(listWaves()));
+app.post('/api/waves/plan', (req, res) => { const plan = planWave({ equipmentId: String(req.body?.equipmentId ?? ''), taskIds: Array.isArray(req.body?.taskIds) ? req.body.taskIds.map(String) : [] }); res.json(plan); });
+app.post('/api/waves', (req, res) => { try { res.status(201).json(createWave({ name: req.body?.name, equipmentId: String(req.body?.equipmentId ?? ''), taskIds: Array.isArray(req.body?.taskIds) ? req.body.taskIds.map(String) : [] })); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '波次提交失败' }); } });
+app.post('/api/waves/:id/start', (req, res) => { try { res.json(startWave(req.params.id)); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '波次启动失败' }); } });
+app.post('/api/waves/:id/pause', (req, res) => { try { res.json(pauseWave(req.params.id, typeof req.body?.reason === 'string' ? req.body.reason : undefined)); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '波次暂停失败' }); } });
+app.post('/api/waves/:id/steps/:taskId/complete', (req, res) => { try { res.json(completeStep(req.params.id, req.params.taskId, { actualMinutes: typeof req.body?.actualMinutes === 'number' ? req.body.actualMinutes : undefined })); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '步骤回报失败' }); } });
+app.post('/api/waves/:id/steps/:taskId/fail', (req, res) => { try { res.json(failStep(req.params.id, req.params.taskId, String(req.body?.reason ?? '现场回报失败'))); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '步骤失败回报失败' }); } });
+app.post('/api/waves/:id/steps/:taskId/retry', (req, res) => { try { res.json(retryStep(req.params.id, req.params.taskId)); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '步骤重试失败' }); } });
+app.post('/api/waves/:id/steps/:taskId/skip', (req, res) => { try { res.json(skipStep(req.params.id, req.params.taskId)); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '步骤跳过失败' }); } });
+app.delete('/api/waves/:id', (req, res) => { try { res.json({ deleted: true, id: deleteWave(req.params.id).id }); } catch (error) { res.status(409).json({ message: error instanceof Error ? error.message : '波次删除失败' }); } });
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'port-yard-operations' }));
 const port = Number(process.env.PORT || 4107); app.listen(port, () => console.log(`port yard API listening on ${port}`));

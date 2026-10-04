@@ -18,9 +18,9 @@ export const voyages: Voyage[] = [
   { id: 'VOY-RD8', vessel: 'ONE Redwood', imo: 'IMO9812340', service: 'PNW', eta: iso(-700), etd: iso(-330), status: 'departed', berth: 'B02', movesPlanned: 520, movesDone: 520, lateRisk: 'low' }
 ];
 export const blocks: YardBlock[] = [
-  { id: 'A01', zone: 'North Import', rows: 14, tiers: 5, capacity: 280, occupied: 247, reeferPlugs: 18, usedPlugs: 16, hazmatAllowed: false, equipment: ['yard-crane', 'terminal-truck'], heat: 78 },
-  { id: 'B07', zone: 'Central Transshipment', rows: 18, tiers: 5, capacity: 360, occupied: 302, reeferPlugs: 24, usedPlugs: 19, hazmatAllowed: true, equipment: ['yard-crane', 'reach-stacker', 'terminal-truck'], heat: 91 },
-  { id: 'C03', zone: 'Export Pre-staging', rows: 12, tiers: 4, capacity: 192, occupied: 128, reeferPlugs: 8, usedPlugs: 3, hazmatAllowed: false, equipment: ['yard-crane', 'terminal-truck'], heat: 54 },
+  { id: 'A01', zone: 'North Import', rows: 14, tiers: 5, capacity: 280, occupied: 248, reeferPlugs: 18, usedPlugs: 16, hazmatAllowed: false, equipment: ['yard-crane', 'terminal-truck'], heat: 78 },
+  { id: 'B07', zone: 'Central Transshipment', rows: 18, tiers: 5, capacity: 360, occupied: 305, reeferPlugs: 24, usedPlugs: 19, hazmatAllowed: true, equipment: ['yard-crane', 'reach-stacker', 'terminal-truck'], heat: 91 },
+  { id: 'C03', zone: 'Export Pre-staging', rows: 12, tiers: 4, capacity: 192, occupied: 130, reeferPlugs: 8, usedPlugs: 3, hazmatAllowed: false, equipment: ['yard-crane', 'terminal-truck'], heat: 54 },
   { id: 'D05', zone: 'Inspection & Hold', rows: 8, tiers: 3, capacity: 96, occupied: 72, reeferPlugs: 5, usedPlugs: 4, hazmatAllowed: true, equipment: ['reach-stacker'], heat: 63 }
 ];
 export const containers: Container[] = [
@@ -30,7 +30,10 @@ export const containers: Container[] = [
   { id: 'OOLU-7734201', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'export', status: 'at-gate', weightT: 24.1, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'C03-R06-T1', appointmentId: 'APT-9001', lastEvent: '南闸口已称重' },
   { id: 'CMAU-6001722', voyageId: 'VOY-QF2', size: '40', isoType: '45G1', direction: 'import', status: 'in-transit', weightT: 23.5, reefer: false, customs: 'released', priority: 'hot', yardSlot: 'B07-R10-T1', lastEvent: '船期 ETA +35min' },
   { id: 'FCIU-9920310', voyageId: 'VOY-QF2', size: '20', isoType: '22G1', direction: 'export', status: 'in-yard', weightT: 12.2, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'C03-R04-T2', lastEvent: '待装船' },
-  { id: 'TEMU-1774029', voyageId: 'VOY-AX7', size: '40', isoType: '45R1', direction: 'import', status: 'in-yard', weightT: 26.3, reefer: true, temperature: 4, customs: 'inspection', priority: 'reefer', yardSlot: 'D05-R05-T1', lastEvent: '待海关查验' }
+  { id: 'TEMU-1774029', voyageId: 'VOY-AX7', size: '40', isoType: '45R1', direction: 'import', status: 'in-yard', weightT: 26.3, reefer: true, temperature: 4, customs: 'inspection', priority: 'reefer', yardSlot: 'D05-R05-T1', lastEvent: '待海关查验' },
+  { id: 'MEDU-3105772', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'import', status: 'in-yard', weightT: 21.6, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'B07-R03-T3', lastEvent: '堆存于 EISU 箱上方，构成同排压箱' },
+  { id: 'GLNU-8844016', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'import', status: 'in-yard', weightT: 23.9, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'C03-R04-T3', lastEvent: '压在 FCIU 上方，装船前需先翻走' },
+  { id: 'TRIU-2290451', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'export', status: 'in-yard', weightT: 24.8, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'A01-R07-T1', lastEvent: '待提箱出场' }
 ];
 export const appointments: GateAppointment[] = [
   { id: 'APT-9001', containerId: 'OOLU-7734201', truckNo: '沪A·7K229', driver: '陈海', type: 'dropoff', windowStart: iso(-14), windowEnd: iso(16), lane: 'south', status: 'checked-in', sealVerified: true, weightVerified: true },
@@ -43,15 +46,20 @@ export const equipment: Equipment[] = [
   { id: 'YC-12', name: '场桥 YC-12', kind: 'yard-crane', status: 'working', location: 'B07-R03', battery: 72, queue: 9, movesPerHour: 24 },
   { id: 'YC-05', name: '场桥 YC-05', kind: 'yard-crane', status: 'available', location: 'C03-R06', battery: 88, queue: 3, movesPerHour: 27 },
   { id: 'TT-31', name: '集卡 TT-31', kind: 'terminal-truck', status: 'working', location: '南闸口', battery: 61, queue: 2, movesPerHour: 8 },
-  { id: 'RS-02', name: '正面吊 RS-02', kind: 'reach-stacker', status: 'maintenance', location: 'D05', battery: 34, queue: 0, movesPerHour: 14 }
+  { id: 'RS-02', name: '正面吊 RS-02', kind: 'reach-stacker', status: 'maintenance', location: 'D05', battery: 34, queue: 0, movesPerHour: 14 },
+  { id: 'YC-19', name: '场桥 YC-19', kind: 'yard-crane', status: 'available', location: 'A01-R02', battery: 91, queue: 0, movesPerHour: 25 }
 ];
 export const tasks: YardTask[] = [
   { id: 'TASK-101', kind: 'deliver', containerId: 'MSCU-4829017', from: 'A01-R07-T3', to: '南闸口', equipmentId: 'YC-12', priority: 92, status: 'assigned', scheduledAt: iso(12), blockingReasons: [], estimatedMinutes: 18 },
-  { id: 'TASK-102', kind: 'rehandle', containerId: 'EISU-1288420', from: 'B07-R03-T2', to: 'D05-R05-T1', equipmentId: 'YC-12', priority: 88, status: 'queued', scheduledAt: iso(24), blockingReasons: ['查验区插件余量接近阈值'], estimatedMinutes: 26 },
+  { id: 'TASK-102', kind: 'rehandle', containerId: 'EISU-1288420', from: 'B07-R03-T2', to: 'D05-R06-T1', equipmentId: 'YC-12', priority: 88, status: 'queued', scheduledAt: iso(24), blockingReasons: ['查验区插件余量接近阈值'], estimatedMinutes: 26 },
   { id: 'TASK-103', kind: 'inspect', containerId: 'TGHU-9831204', from: 'D05-R02-T1', to: 'D05-R02-T1', priority: 125, status: 'blocked', scheduledAt: iso(4), blockingReasons: ['RS-02 维护中', '待海关查验窗口'], estimatedMinutes: 32 },
-  { id: 'TASK-104', kind: 'load', containerId: 'FCIU-9920310', from: 'C03-R04-T2', to: 'B07 / VOY-QF2', equipmentId: 'YC-05', priority: 75, status: 'queued', scheduledAt: iso(76), blockingReasons: [], estimatedMinutes: 21 }
+  { id: 'TASK-104', kind: 'load', containerId: 'FCIU-9920310', from: 'C03-R04-T2', to: 'B07 / VOY-QF2', equipmentId: 'YC-05', priority: 75, status: 'queued', scheduledAt: iso(76), blockingReasons: [], estimatedMinutes: 21 },
+  { id: 'TASK-105', kind: 'rehandle', containerId: 'MEDU-3105772', from: 'B07-R03-T3', to: 'C03-R09-T1', equipmentId: 'YC-12', priority: 79, status: 'queued', scheduledAt: iso(18), blockingReasons: [], estimatedMinutes: 19 },
+  { id: 'TASK-106', kind: 'deliver', containerId: 'TRIU-2290451', from: 'A01-R07-T1', to: '南闸口', equipmentId: 'YC-12', priority: 70, status: 'queued', scheduledAt: iso(40), blockingReasons: [], estimatedMinutes: 16 },
+  { id: 'TASK-107', kind: 'rehandle', containerId: 'GLNU-8844016', from: 'C03-R04-T3', to: 'A01-R09-T1', equipmentId: 'YC-05', priority: 60, status: 'queued', scheduledAt: iso(64), blockingReasons: [], estimatedMinutes: 22 }
 ];
 export const auditEvents: AuditEvent[] = [{ id: 'AUD-500', actor: '中控调度员', action: 'REPLAN', entity: 'voyage', entityId: 'VOY-AX7', at: new Date(start - 20 * 60000).toISOString(), details: '因 QC-07 瞬时降速，重新计算 14 个高优先级作业' }];
+let taskSeq = 0;
 
 function parseSlot(slot: string) { const match = slot.match(/^([A-Z]\d\d)-/); return match?.[1]; }
 export function dashboard() {
@@ -93,8 +101,8 @@ export type ContainerInput = Omit<Container, 'lastEvent' | 'appointmentId'> & { 
 export type AppointmentInput = Pick<GateAppointment, 'containerId' | 'truckNo' | 'driver' | 'type' | 'windowStart' | 'windowEnd' | 'lane'>;
 export type TaskInput = Pick<YardTask, 'kind' | 'containerId' | 'from' | 'to' | 'priority' | 'scheduledAt' | 'estimatedMinutes'> & { equipmentId?: string };
 
-function recordAudit(action: string, entity: string, entityId: string, details: string) {
-  auditEvents.unshift({ id: `AUD-${Date.now()}`, actor: '中控调度员', action, entity, entityId, at: new Date().toISOString(), details });
+export function recordAudit(action: string, entity: string, entityId: string, details: string) {
+  auditEvents.unshift({ id: `AUD-${Date.now()}-${Math.floor(Math.random() * 1e4)}`, actor: '中控调度员', action, entity, entityId, at: new Date().toISOString(), details });
 }
 
 export function createContainer(input: ContainerInput) {
@@ -182,7 +190,8 @@ export function createYardTask(input: TaskInput) {
   if (!containers.some(container => container.id === input.containerId)) throw new Error('关联箱号不存在');
   if (input.priority < 1 || input.priority > 100) throw new Error('优先级范围为 1–100');
   if (input.estimatedMinutes <= 0) throw new Error('预计作业时长必须大于 0');
-  const item: YardTask = { ...input, id: `TASK-${Date.now()}`, status: input.equipmentId ? 'assigned' : 'queued', blockingReasons: [], scheduledAt: input.scheduledAt };
+  const id = `TASK-${Date.now().toString(36)}${(taskSeq += 1).toString(36)}`;
+  const item: YardTask = { ...input, id, status: input.equipmentId ? 'assigned' : 'queued', blockingReasons: [], scheduledAt: input.scheduledAt };
   tasks.unshift(item);
   recordAudit('CREATE', 'yard-task', item.id, `创建 ${input.kind} 任务，关联 ${input.containerId}`);
   return item;
