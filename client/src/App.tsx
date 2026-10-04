@@ -6,9 +6,15 @@ type Container = { id: string; voyageId: string; size: '20'|'40'|'45'; isoType: 
 type Block = { id: string; zone: string; capacity: number; occupied: number; reeferPlugs: number; usedPlugs: number; hazmatAllowed: boolean; heat: number; utilization: number; freeSlots: number; pressure: string };
 type Conflict = { severity: string; appointmentId: string; reason: string };
 type Appointment = { id: string; containerId: string; truckNo: string; driver: string; type: 'pickup'|'dropoff'; windowStart: string; windowEnd: string; lane: 'north'|'south'|'rail'; status: string; exception?: string };
-type Task = { id: string; kind: string; containerId: string; from: string; to: string; equipmentId?: string; priority: number; score: number; status: string; blockingReasons: string[]; estimatedMinutes: number; scheduledAt: string };
+type Task = { id: string; kind: string; containerId: string; from: string; to: string; equipmentId?: string; priority: number; score: number; status: string; blockingReasons: string[]; estimatedMinutes: number; scheduledAt: string; waveId?: string };
 type Equipment = { id: string; name: string; kind: string; status: string; location: string; battery: number; queue: number; movesPerHour: number };
-type Section = 'control'|'containers'|'gate'|'yard'|'tasks';
+type WaveIssue = { level: 'hard'|'warning'; code: string; taskId?: string; message: string };
+type WaveStep = { taskId: string; containerId: string; kind: string; from: string; to: string; order: number; prerequisites: string[]; status: 'pending'|'executing'|'done'|'failed'; workMinutes: number; travelMinutesBefore: number; crossZone: boolean; travelLabel: string; plannedStart: string; plannedEnd: string; failureReason?: string };
+type BlockingPoint = { taskId: string; label: string; detail: string };
+type Checkpoint = { at: string; completedTaskId: string; nextTaskId?: string; stepsDone: number; stepsTotal: number };
+type WorkWave = { id: string; name: string; equipmentId: string; equipmentName: string; status: 'planned'|'running'|'interrupted'|'completed'|'cancelled'; steps: WaveStep[]; etaMinutes: number; workMinutes: number; travelMinutes: number; idleMinutes: number; issues: WaveIssue[]; blockingPoints: BlockingPoint[]; revision: number; createdAt: string; startedAt?: string; finishedAt?: string; lastCheckpoint?: Checkpoint; resumeTaskId?: string };
+type WavePreview = { steps: WaveStep[]; issues: WaveIssue[]; etaMinutes: number; workMinutes: number; travelMinutes: number; idleMinutes: number; blockingPoints: BlockingPoint[] };
+type Section = 'control'|'containers'|'gate'|'yard'|'tasks'|'waves';
 type Editor = { entity: 'container'|'appointment'|'task'; mode: 'create'|'edit'; id?: string; values: Record<string, string|boolean> };
 
 const api = '/api';
@@ -23,6 +29,166 @@ const defaultValues = (entity: Editor['entity']): Record<string, string|boolean>
   if (entity === 'appointment') return { containerId: '', truckNo: '', driver: '', type: 'pickup', windowStart: toLocalInput(), windowEnd: toLocalInput(new Date(Date.now() + 60 * 60000).toISOString()), lane: 'north' };
   return { kind: 'receive', containerId: '', from: '闸口', to: 'C03-R01-T1', equipmentId: '', priority: '50', scheduledAt: toLocalInput(), estimatedMinutes: '20', status: 'queued' };
 };
+
+// ── 场桥作业波次控制台 ────────────────────────────────────────────────────────
+
+const waveStatusLabel: Record<string, string> = { planned: '待下发', running: '执行中', interrupted: '已中断', completed: '已完成', cancelled: '已取消' };
+const stepStatusLabel: Record<string, string> = { pending: '待执行', executing: '执行中', done: '已完成', failed: '失败' };
+const kindLabel: Record<string, string> = { rehandle: '翻箱', deliver: '提箱', load: '装船' };
+const clock = (value: string) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function WaveConsole({ equipment, tasks, waves, reload }: { equipment: Equipment[]; tasks: Task[]; waves: WorkWave[]; reload: () => Promise<void> }) {
+  const cranes = equipment.filter(item => item.kind === 'yard-crane');
+  const [craneId, setCraneId] = useState(cranes[0]?.id ?? '');
+  const [name, setName] = useState('');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [preview, setPreview] = useState<WavePreview>();
+  const [previewError, setPreviewError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [failFor, setFailFor] = useState<{ waveId: string; taskId: string }>();
+  const [failReason, setFailReason] = useState('');
+
+  const waveTaskIds = useMemo(() => new Set(waves.filter(w => w.status === 'planned' || w.status === 'running' || w.status === 'interrupted').flatMap(w => w.steps.map(s => s.taskId))), [waves]);
+  const availableTasks = useMemo(() => tasks.filter(t => ['rehandle', 'deliver', 'load'].includes(t.kind) && t.status !== 'done' && !waveTaskIds.has(t.id)), [tasks, waveTaskIds]);
+
+  const refreshPreview = useCallback(async (nextCrane: string, nextPicked: string[]) => {
+    if (nextPicked.length === 0) { setPreview(undefined); setPreviewError(''); return; }
+    try {
+      const result = await request<WavePreview>('/waves/preview', { method: 'POST', body: JSON.stringify({ equipmentId: nextCrane, taskIds: nextPicked }) });
+      setPreview(result); setPreviewError('');
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : '路线校验失败';
+      setPreview(undefined); setPreviewError(message);
+    }
+  }, []);
+
+  useEffect(() => { void refreshPreview(craneId, picked); }, [craneId, picked, refreshPreview]);
+
+  const toggleTask = (id: string) => setPicked(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+  const hardIssues = preview?.issues.filter(i => i.level === 'hard') ?? [];
+
+  const submit = async () => {
+    setBusy(true); setError('');
+    try {
+      await request('/waves', { method: 'POST', body: JSON.stringify({ name: name || undefined, equipmentId: craneId, taskIds: picked }) });
+      setPicked([]); setName(''); setPreview(undefined);
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '组波失败'); }
+    finally { setBusy(false); }
+  };
+  const waveAction = async (wave: WorkWave, path: string, body?: unknown, expectedRevision = true) => {
+    setBusy(true); setError('');
+    try {
+      await request(`/waves/${wave.id}${path}`, { method: 'POST', body: JSON.stringify(expectedRevision ? { revision: wave.revision, ...(body ?? {}) } : body) });
+      setFailFor(undefined); setFailReason('');
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); }
+    finally { setBusy(false); }
+  };
+
+  return <div className="wave-console">
+    <section className="panel wide">
+      <div className="panel-head">
+        <div><div className="eyebrow">YARD CRANE WAVE / 批处理与路线校验</div><h2>场桥作业波次</h2><span className="muted">rehandle · deliver · load 组批，校验堆位层级、同排阻塞、设备跨区移动与任务前置关系</span></div>
+        <span className="muted">{waves.length} 个波次 · {waves.filter(w => w.status === 'interrupted').length} 个待恢复</span>
+      </div>
+      {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}<button onClick={() => setError('')}>关闭</button></div>}
+      <div className="wave-grid">
+        {waves.map(wave => {
+          const done = wave.steps.filter(s => s.status === 'done').length;
+          const failedStep = wave.steps.find(s => s.status === 'failed');
+          const executing = wave.steps.find(s => s.status === 'executing');
+          const progress = Math.round(done / wave.steps.length * 100);
+          return <div className={`wave-card status-${wave.status}`} key={wave.id}>
+            <div className="wave-card-head">
+              <div><b>{wave.id}</b><small>{wave.name}</small><small>{wave.equipmentName}</small></div>
+              <span className={`pill wave-status ${wave.status}`}>{waveStatusLabel[wave.status]}</span>
+            </div>
+            <div className="wave-eta">
+              <div><small>预计总耗时</small><b>{wave.etaMinutes}<em> min</em></b></div>
+              <div><small>纯作业</small><b>{wave.workMinutes}<em> min</em></b></div>
+              <div className={wave.travelMinutes > 0 ? 'travel' : ''}><small>跨区移机</small><b>{wave.travelMinutes}<em> min</em></b></div>
+              <div><small>窗口等待</small><b>{wave.idleMinutes}<em> min</em></b></div>
+            </div>
+            <div className="wave-progress"><i style={{ width: `${progress}%` }} className={wave.status === 'interrupted' ? 'halt' : ''} /></div>
+            <small className="wave-progress-label">{done}/{wave.steps.length} 步完成 · rev {wave.revision}</small>
+            {wave.lastCheckpoint && <div className="checkpoint">断点：{wave.lastCheckpoint.completedTaskId} 已于 {clock(wave.lastCheckpoint.at)} 完工{wave.lastCheckpoint.nextTaskId ? `，下一步 ${wave.lastCheckpoint.nextTaskId}` : ''}</div>}
+            {failedStep && <div className="wave-failure"><b>{failedStep.taskId} 失败</b><span>{failedStep.failureReason}</span></div>}
+            <div className="wave-timeline">
+              {wave.steps.map(step => <div className={`wave-step ${step.status}`} key={step.taskId}>
+                <span className="step-order">{step.order + 1}</span>
+                <div className="step-main">
+                  <b>{step.taskId} · {kindLabel[step.kind] ?? step.kind} · {step.containerId}</b>
+                  <small>{step.from} → {step.to}</small>
+                  {step.crossZone && <small className="step-travel">⚠ {step.travelLabel}</small>}
+                  {step.prerequisites.length > 0 && <small className="step-prereq">前置：{step.prerequisites.join('、')}</small>}
+                  {step.status === 'failed' && step.failureReason && <small className="step-fail-reason">{step.failureReason}</small>}
+                </div>
+                <span className={`pill ${step.status}`}>{stepStatusLabel[step.status]}</span>
+              </div>)}
+            </div>
+            {wave.blockingPoints.length > 0 && <div className="wave-blockers">
+              <small>阻塞点（{wave.blockingPoints.length}）</small>
+              {wave.blockingPoints.slice(0, 4).map((point, index) => <div key={index} className="blocker-item"><b>{point.label}</b><span>{point.detail}</span></div>)}
+              {wave.blockingPoints.length > 4 && <small>…另有 {wave.blockingPoints.length - 4} 项</small>}
+            </div>}
+            <div className="wave-actions">
+              {wave.status === 'planned' && <button className="primary-action" disabled={busy} onClick={() => void waveAction(wave, '/start')}>下发波次</button>}
+              {wave.status === 'running' && executing && <>
+                <button className="primary-action" disabled={busy} onClick={() => void waveAction(wave, `/steps/${executing.taskId}/complete`)}>回报 {executing.taskId} 完工</button>
+                <button className="danger-action" disabled={busy} onClick={() => { setFailFor({ waveId: wave.id, taskId: executing.taskId }); setFailReason(''); }}>现场失败</button>
+              </>}
+              {wave.status === 'interrupted' && failedStep && <button className="resume-action" disabled={busy} onClick={() => void waveAction(wave, `/steps/${failedStep.taskId}/resume`)}>↻ 从断点 {failedStep.taskId} 恢复</button>}
+              {(wave.status === 'planned' || wave.status === 'running' || wave.status === 'interrupted') && <button className="danger-action" disabled={busy} onClick={() => { if (window.confirm(`确认取消波次 ${wave.id}？未完成任务将解锁回队。`)) void waveAction(wave, '/abort'); }}>取消波次</button>}
+              {wave.status === 'completed' && <small>已于 {wave.finishedAt ? clock(wave.finishedAt) : ''} 关闭</small>}
+            </div>
+            {failFor?.waveId === wave.id && <div className="fail-form">
+              <input placeholder="填写现场失败原因（必填），后续步骤将冻结" value={failReason} onChange={e => setFailReason(e.target.value)} />
+              <div><button disabled={busy || !failReason.trim()} className="danger-action" onClick={() => void waveAction(wave, `/steps/${failFor.taskId}/fail`, { reason: failReason })}>确认失败并中断</button><button disabled={busy} onClick={() => setFailFor(undefined)}>撤回</button></div>
+            </div>}
+          </div>;
+        })}
+      </div>
+    </section>
+
+    <section className="panel wide">
+      <div className="panel-head"><div><div className="eyebrow">WAVE COMPOSER / 组波面板</div><h2>选择设备与任务生成作业波次</h2><span className="muted">勾选后实时做路线校验并预估耗时，不满足堆位层级/前置约束将禁止提交</span></div></div>
+      <div className="composer-layout">
+        <div className="composer-form">
+          <label>执行场桥<select value={craneId} onChange={e => setCraneId(e.target.value)}>{cranes.map(crane => <option key={crane.id} value={crane.id}>{crane.name} · {crane.location} · {crane.status}</option>)}</select></label>
+          <label>波次名称（可选）<input value={name} onChange={e => setName(e.target.value)} placeholder="例如：YC-05 午后装船准备波次" /></label>
+          <div className="composer-tasks">
+            <small>可关联任务（已被其他波次锁定、已完成任务不显示）</small>
+            {availableTasks.length === 0 && <div className="composer-empty">暂无可组波任务</div>}
+            {availableTasks.map(task => <label className={`task-pick ${picked.includes(task.id) ? 'on' : ''}`} key={task.id}>
+              <input type="checkbox" checked={picked.includes(task.id)} onChange={() => toggleTask(task.id)} />
+              <span><b>{task.id} · {kindLabel[task.kind] ?? task.kind} · {task.containerId}</b><small>{task.from} → {task.to} · 优先级 {task.priority} · {task.estimatedMinutes}min</small></span>
+            </label>)}
+          </div>
+          <div className="composer-submit"><button className="primary-action" disabled={busy || picked.length === 0 || hardIssues.length > 0} onClick={() => void submit()}>{busy ? '提交中…' : `提交波次（${picked.length} 个任务）`}</button></div>
+        </div>
+        <div className="composer-preview">
+          <div className="panel-head" style={{ marginBottom: 10 }}><h3>路线校验预览</h3>{preview && <span className={`pill ${hardIssues.length ? 'exception' : 'done'}`}>{hardIssues.length ? `${hardIssues.length} 项硬冲突` : '校验通过'}</span>}</div>
+          {picked.length === 0 && <div className="composer-empty">勾选任务后自动生成执行顺序、预计耗时与阻塞点</div>}
+          {previewError && <div className="form-error">{previewError}</div>}
+          {preview && <>
+            <div className="wave-eta preview-eta">
+              <div><small>预计总耗时</small><b>{preview.etaMinutes}<em> min</em></b></div>
+              <div><small>纯作业</small><b>{preview.workMinutes}<em> min</em></b></div>
+              <div className={preview.travelMinutes > 0 ? 'travel' : ''}><small>跨区移机</small><b>{preview.travelMinutes}<em> min</em></b></div>
+              <div><small>窗口等待</small><b>{preview.idleMinutes}<em> min</em></b></div>
+            </div>
+            {hardIssues.length > 0 && <div className="preview-issues">{hardIssues.map((issue, i) => <div key={i} className="issue-hard">✕ {issue.message}</div>)}</div>}
+            {preview.steps.length > 0 && <div className="preview-order"><small>生成执行顺序</small>{preview.steps.map(step => <div className="preview-step" key={step.taskId}><span>{step.order + 1}</span><b>{step.taskId} · {step.containerId}</b><small>{step.from} → {step.to}{step.crossZone ? ` · 移机 ${step.travelMinutesBefore}min` : ''}</small></div>)}</div>}
+            {preview.blockingPoints.length > 0 && <div className="preview-blockers"><small>阻塞点</small>{preview.blockingPoints.slice(0, 5).map((point, i) => <div key={i}><b>{point.label}</b> <span>{point.detail}</span></div>)}</div>}
+            {preview.issues.filter(i => i.level === 'warning').slice(0, 3).map((issue, i) => <div key={`w${i}`} className="issue-warning">⚠ {issue.message}</div>)}
+          </>}
+        </div>
+      </div>
+    </section>
+  </div>;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${api}${path}`, { ...init, headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers } });
@@ -40,6 +206,7 @@ export default function App() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
+  const [waves, setWaves] = useState<WorkWave[]>([]);
   const [tab, setTab] = useState<Section>('control');
   const [selectedVoyage, setSelectedVoyage] = useState('VOY-AX7');
   const [editor, setEditor] = useState<Editor>();
@@ -48,12 +215,12 @@ export default function App() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const [d, v, ctn, b, cf, a, t, e] = await Promise.all([
+    const [d, v, ctn, b, cf, a, t, e, w] = await Promise.all([
       request<Dashboard>('/dashboard'), request<Voyage[]>('/voyages'), request<Container[]>('/containers'),
       request<Block[]>('/yard/heatmap'), request<Conflict[]>('/gate/conflicts'), request<Appointment[]>('/gate/appointments'),
-      request<Task[]>('/tasks'), request<Equipment[]>('/equipment')
+      request<Task[]>('/tasks'), request<Equipment[]>('/equipment'), request<WorkWave[]>('/waves')
     ]);
-    setDashboard(d); setVoyages(v); setContainers(ctn); setBlocks(b); setConflicts(cf); setAppointments(a); setTasks(t); setEquipment(e);
+    setDashboard(d); setVoyages(v); setContainers(ctn); setBlocks(b); setConflicts(cf); setAppointments(a); setTasks(t); setEquipment(e); setWaves(w);
   }, []);
   useEffect(() => { void load().catch(reason => setError(reason instanceof Error ? reason.message : '无法连接服务端')); }, [load]);
 
@@ -104,13 +271,14 @@ export default function App() {
     <header><div><div className="eyebrow">PORT OPS / YARD & GATE CONTROL</div><h1>HarborGrid <span>港口集装箱堆场协同与闸口调度</span></h1><p>把船期、箱务、堆场容量、危险品/冷藏约束、闸口预约与场内设备任务放在同一条作业链路上。</p></div><div className="header-right"><span className="live"><i/> TOS LINKED</span><span className="clock">LIVE · {new Date().toLocaleTimeString()}</span></div></header>
     {message && <div className="toast" onClick={() => setMessage('')}>{message} ×</div>}{error && <div className="form-error page-error">{error}<button onClick={() => setError('')}>关闭</button></div>}
     <section className="kpis"><div><small>ACTIVE VESSELS</small><b>{dashboard.activeVoyages}<em> 艘</em></b><span>{dashboard.lateVessels} 艘存在延误风险</span></div><div><small>YARD UTILIZATION</small><b>{pct(dashboard.yardUtilization)}</b><span>可用堆位 / 危险品隔离纳管</span></div><div><small>GATE QUEUE</small><b>{dashboard.gateQueue}<em> 车</em></b><span>预约、已进场与车道排队</span></div><div><small>EXCEPTIONS</small><b>{dashboard.blockedTasks + dashboard.reeferAlerts + dashboard.hazmatHolds}<em> 项</em></b><span>{dashboard.blockedTasks} 作业阻塞 · {dashboard.reeferAlerts} 冷藏告警</span></div></section>
-    <nav className="tabs"><button className={tab==='control'?'active':''} onClick={() => setTab('control')}>作业驾驶舱</button><button className={tab==='containers'?'active':''} onClick={() => setTab('containers')}>箱务台账 / CRUD</button><button className={tab==='gate'?'active':''} onClick={() => setTab('gate')}>闸口预约</button><button className={tab==='yard'?'active':''} onClick={() => setTab('yard')}>堆场热区</button><button className={tab==='tasks'?'active':''} onClick={() => setTab('tasks')}>设备任务</button><span>最后同步 {new Date().toLocaleTimeString()}</span></nav>
+    <nav className="tabs"><button className={tab==='control'?'active':''} onClick={() => setTab('control')}>作业驾驶舱</button><button className={tab==='containers'?'active':''} onClick={() => setTab('containers')}>箱务台账 / CRUD</button><button className={tab==='gate'?'active':''} onClick={() => setTab('gate')}>闸口预约</button><button className={tab==='yard'?'active':''} onClick={() => setTab('yard')}>堆场热区</button><button className={tab==='tasks'?'active':''} onClick={() => setTab('tasks')}>设备任务</button><button className={tab==='waves'?'active':''} onClick={() => setTab('waves')}>场桥波次{waves.some(w=>w.status==='interrupted')?` · ${waves.filter(w=>w.status==='interrupted').length} 中断`:''}</button><span>最后同步 {new Date().toLocaleTimeString()}</span></nav>
     {tab === 'control' && <div className="layout"><section className="panel vessel-panel"><div className="panel-head"><div><div className="eyebrow">VESSEL WINDOW / 船期窗口</div><h2>泊位作业进度</h2></div><span className="muted">剩余作业动态计算</span></div>{voyages.map(voyage => <button key={voyage.id} className={`vessel ${selectedVoyage===voyage.id?'selected':''}`} onClick={() => setSelectedVoyage(voyage.id)}><span className={`vessel-dot ${voyage.status}`}/><span className="vessel-main"><b>{voyage.vessel}</b><small>{voyage.id} · {voyage.service} · {voyage.berth}</small><i><em style={{ width: `${Math.min(100, voyage.movesDone / voyage.movesPlanned * 100)}%` }}/></i></span><span className="vessel-move"><b>{voyage.movesDone.toLocaleString()}</b><small>/ {voyage.movesPlanned.toLocaleString()} moves</small></span><strong className={voyage.lateRisk}>{voyage.lateRisk==='high'?'HIGH':voyage.lateRisk==='medium'?'WATCH':'ON TIME'}</strong></button>)}</section><section className="panel focus-panel"><div className="panel-head"><div><div className="eyebrow">SELECTED VOYAGE / {selected?.id}</div><h2>{selected?.vessel}</h2></div><span className={`badge ${selected?.lateRisk}`}>{selected?.status}</span></div><div className="voyage-stats"><div><small>ETA</small><b>{selected&&time(selected.eta)}</b><span>预计靠泊</span></div><div><small>ETD</small><b>{selected&&time(selected.etd)}</b><span>计划离港</span></div><div><small>REMAINING</small><b>{remaining}</b><span>剩余翻箱</span></div></div><div className="berth-map"><div className="water"><span>岸线 / BERTH</span><i className="ship" style={{ left: `${selected?.berth==='B07'?50:24}%` }}>{selected?.vessel}</i><b>B01</b><b>B04</b><b>B07</b><b>B10</b></div></div><div className="callout"><strong>调度策略</strong><span>已把 {dashboard.blockedTasks} 个阻塞任务、{dashboard.gateQueue} 车闸口压力纳入当前窗口；优先保护冷藏与危险品安全约束。</span></div></section><section className="panel wide"><div className="panel-head"><h3>异常与联动信号</h3><span>{conflicts.length} gate conflicts detected</span></div><div className="signal-grid"><div><strong className="critical">{dashboard.blockedTasks}</strong><span>设备/约束阻塞</span><small>最高优先级：海关查验任务</small></div><div><strong className="warning">{conflicts.length}</strong><span>闸口预约冲突</span><small>同车重叠窗口需人工重排</small></div><div><strong className="warning">{dashboard.reeferAlerts}</strong><span>冷藏与温控风险</span><small>查验区电源余量接近阈值</small></div><div><strong className="ok">{equipment.filter(item => item.status==='available').length}</strong><span>可调度设备</span><small>场桥 / 正面吊 / 集卡</small></div></div></section></div>}
     {tab === 'containers' && <section className="panel wide"><div className="panel-head"><div><div className="eyebrow">CONTAINER REGISTER / CRUD</div><h2>箱务台账</h2><span className="muted">新增、查询、编辑、删除；危险品与冷藏箱受堆场约束校验</span></div><button className="primary-action" onClick={() => openCreate('container')}>＋ 新增箱务</button></div><div className="table container-table"><div className="tr th"><span>箱号 / 航次</span><span>尺寸 / 流向</span><span>箱况 / 海关</span><span>堆位</span><span>重量 / 属性</span><span>操作</span></div>{containers.map(container => <div className="tr" key={container.id}><span><b>{container.id}</b><small>{container.voyageId} · {container.lastEvent}</small></span><span>{container.size}ft · {container.direction}<small>{container.isoType}</small></span><span><b>{container.status}</b><small>海关：{container.customs}</small></span><span>{container.yardSlot}</span><span>{container.weightT}t<small>{container.reefer?`冷藏 ${container.temperature}°C`:container.hazmatClass?`危险品 ${container.hazmatClass} 类`:'普通箱'}</small></span><span className="row-actions"><button onClick={() => openEdit('container', container.id, { ...container, weightT: String(container.weightT), temperature: String(container.temperature ?? 4), hazmatClass: container.hazmatClass ?? '' })}>编辑</button><button className="danger-action" onClick={() => void remove('container', container.id)}>删除</button></span></div>)}</div></section>}
     {tab === 'gate' && <section className="panel wide"><div className="panel-head"><div><div className="eyebrow">GATE APPOINTMENT / SLOT CONTROL</div><h2>闸口预约与车道状态</h2><span className="muted">支持新增预约、编辑时隙、签到/完成和删除</span></div><button className="primary-action" onClick={() => openCreate('appointment')}>＋ 新增预约</button></div>{conflicts.map(conflict => <div className="conflict" key={`${conflict.appointmentId}-${conflict.reason}`}><strong>{conflict.severity}</strong><b>{conflict.appointmentId}</b><span>{conflict.reason}</span></div>)}<div className="table"><div className="tr th"><span>预约</span><span>箱号 / 车辆</span><span>窗口</span><span>车道</span><span>状态</span><span>操作</span></div>{appointments.map(appointment => <div className="tr" key={appointment.id}><span><b>{appointment.id}</b><small>{appointment.type}</small></span><span><b>{appointment.containerId}</b><small>{appointment.truckNo} · {appointment.driver}</small></span><span>{time(appointment.windowStart)}—{time(appointment.windowEnd)}</span><span>{appointment.lane}</span><span className={`pill ${appointment.status}`}>{appointment.status}</span><span className="row-actions">{appointment.status==='booked'?<button onClick={() => void updateAppointmentStatus(appointment.id, 'checked-in')}>签到</button>:appointment.status==='checked-in'?<button onClick={() => void updateAppointmentStatus(appointment.id, 'completed')}>完成</button>:null}<button onClick={() => openEdit('appointment', appointment.id, { ...appointment, windowStart: toLocalInput(appointment.windowStart), windowEnd: toLocalInput(appointment.windowEnd) })}>编辑</button><button className="danger-action" onClick={() => void remove('appointment', appointment.id)}>删除</button></span></div>)}</div></section>}
     {tab === 'yard' && <section className="panel wide"><div className="panel-head"><div><div className="eyebrow">YARD HEATMAP / STACK DENSITY</div><h2>堆场容量与安全约束</h2></div><span className="muted">实时区块压力</span></div><div className="yard-grid">{blocks.map(block => <div className={`block ${block.pressure}`} key={block.id}><div className="block-top"><b>{block.id}</b><strong>{pct(block.utilization)}</strong></div><span>{block.zone}</span><div className="heat"><i style={{ width: `${block.heat / maxHeat * 100}%` }}/></div><div className="block-stats"><span>空位 {block.freeSlots}</span><span>冷插 {block.usedPlugs}/{block.reeferPlugs}</span><span>{block.hazmatAllowed?'危险品可入':'普通区'}</span></div></div>)}</div><div className="yard-note"><span>堆位推荐会同时考虑容量、热区、危险品隔离、冷藏插座和设备可达性。</span><b>A01 → C03 重排建议可释放 21 个低热度堆位</b></div></section>}
     {tab === 'tasks' && <div className="layout"><section className="panel wide"><div className="panel-head"><div><div className="eyebrow">TASK DISPATCH / EQUIPMENT POOL</div><h2>场内任务优先级与设备指派</h2><span className="muted">支持新增、编辑、删除和设备指派</span></div><button className="primary-action" onClick={() => openCreate('task')}>＋ 新建任务</button></div><div className="table task-table"><div className="tr th"><span>任务</span><span>箱号</span><span>路径</span><span>优先级</span><span>状态</span><span>设备 / 操作</span></div>{tasks.map(task => <div className="tr" key={task.id}><span><b>{task.id}</b><small>{task.kind} · {task.estimatedMinutes}min</small></span><span>{task.containerId}</span><span>{task.from} → {task.to}</span><span className={task.score>95?'critical':''}>{task.score}</span><span><span className={`pill ${task.status}`}>{task.status}</span>{task.blockingReasons.length>0&&<small className="blocked-text">{task.blockingReasons[0]}</small>}</span><span className="task-actions"><select value={task.equipmentId??''} onChange={event => void assign(task.id, event.target.value)}><option value="">未指派</option>{equipment.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={() => openEdit('task', task.id, { kind: task.kind, containerId: task.containerId, from: task.from, to: task.to, equipmentId: task.equipmentId ?? '', priority: String(task.priority), estimatedMinutes: String(task.estimatedMinutes), scheduledAt: toLocalInput(task.scheduledAt), status: task.status })}>编辑</button><button className="danger-action" onClick={() => void remove('task', task.id)}>删除</button></span></div>)}</div></section><section className="panel"><div className="panel-head"><h3>设备池</h3><span>{equipment.length} assets</span></div>{equipment.map(item => <div className="equipment" key={item.id}><i className={`equip-dot ${item.status}`}/><div><b>{item.name}</b><small>{item.location} · 队列 {item.queue}</small></div><strong>{item.battery}%</strong></div>)}</section></div>}
-    <footer>HarborGrid · 内存种子数据 + REST API · 箱务台账、闸口预约、场内任务提供完整增删改查操作</footer>
+    {tab === 'waves' && <WaveConsole equipment={equipment} tasks={tasks} waves={waves} reload={load} />}
+    <footer>HarborGrid · 内存种子数据 + REST API · 箱务台账、闸口预约、场内任务、场桥作业波次提供完整的校验与恢复操作</footer>
     {editor && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setEditor(undefined); }}><form className="editor-modal" onSubmit={saveEditor}><div className="modal-head"><div><div className="eyebrow">{editor.mode.toUpperCase()} / {editor.entity.toUpperCase()}</div><h2>{editor.mode==='create'?'创建':'编辑'}{editor.entity==='container'?'箱务记录':editor.entity==='appointment'?'闸口预约':'作业任务'}</h2></div><button type="button" className="icon-button" onClick={() => setEditor(undefined)}>×</button></div>
       {editor.entity === 'container' && <div className="form-grid">
         <label>集装箱号<input required disabled={editor.mode==='edit'} value={String(editor.values.id)} onChange={event => updateField('id', event.target.value.toUpperCase())}/></label>

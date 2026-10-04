@@ -8,7 +8,7 @@ export interface Container { id: string; voyageId: string; size: '20' | '40' | '
 export interface YardBlock { id: string; zone: string; rows: number; tiers: number; capacity: number; occupied: number; reeferPlugs: number; usedPlugs: number; hazmatAllowed: boolean; equipment: EquipmentKind[]; heat: number; }
 export interface GateAppointment { id: string; containerId: string; truckNo: string; driver: string; type: 'pickup' | 'dropoff'; windowStart: string; windowEnd: string; lane: 'north' | 'south' | 'rail'; status: AppointmentStatus; sealVerified: boolean; weightVerified: boolean; exception?: string; }
 export interface Equipment { id: string; name: string; kind: EquipmentKind; status: 'available' | 'working' | 'maintenance' | 'offline'; location: string; battery: number; queue: number; movesPerHour: number; }
-export interface YardTask { id: string; kind: 'receive' | 'deliver' | 'rehandle' | 'load' | 'discharge' | 'inspect'; containerId: string; from: string; to: string; equipmentId?: string; priority: number; status: TaskStatus; scheduledAt: string; blockingReasons: string[]; estimatedMinutes: number; }
+export interface YardTask { id: string; kind: 'receive' | 'deliver' | 'rehandle' | 'load' | 'discharge' | 'inspect'; containerId: string; from: string; to: string; equipmentId?: string; priority: number; status: TaskStatus; scheduledAt: string; blockingReasons: string[]; estimatedMinutes: number; waveId?: string; }
 export interface AuditEvent { id: string; actor: string; action: string; entity: string; entityId: string; at: string; details: string; }
 
 const start = Date.now(); const iso = (minutes: number) => new Date(start + minutes * 60000).toISOString();
@@ -29,8 +29,12 @@ export const containers: Container[] = [
   { id: 'TGHU-9831204', voyageId: 'VOY-AX7', size: '20', isoType: '22K2', direction: 'transshipment', status: 'hold', weightT: 19.7, reefer: false, hazmatClass: '3', customs: 'inspection', priority: 'hazmat', yardSlot: 'D05-R02-T1', lastEvent: '海关查验挂起' },
   { id: 'OOLU-7734201', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'export', status: 'at-gate', weightT: 24.1, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'C03-R06-T1', appointmentId: 'APT-9001', lastEvent: '南闸口已称重' },
   { id: 'CMAU-6001722', voyageId: 'VOY-QF2', size: '40', isoType: '45G1', direction: 'import', status: 'in-transit', weightT: 23.5, reefer: false, customs: 'released', priority: 'hot', yardSlot: 'B07-R10-T1', lastEvent: '船期 ETA +35min' },
-  { id: 'FCIU-9920310', voyageId: 'VOY-QF2', size: '20', isoType: '22G1', direction: 'export', status: 'in-yard', weightT: 12.2, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'C03-R04-T2', lastEvent: '待装船' },
-  { id: 'TEMU-1774029', voyageId: 'VOY-AX7', size: '40', isoType: '45R1', direction: 'import', status: 'in-yard', weightT: 26.3, reefer: true, temperature: 4, customs: 'inspection', priority: 'reefer', yardSlot: 'D05-R05-T1', lastEvent: '待海关查验' }
+  { id: 'FCIU-9920310', voyageId: 'VOY-QF2', size: '20', isoType: '22G1', direction: 'export', status: 'in-yard', weightT: 12.2, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'C03-R04-T1', lastEvent: '待装船' },
+  { id: 'TEMU-1774029', voyageId: 'VOY-AX7', size: '40', isoType: '45R1', direction: 'import', status: 'in-yard', weightT: 26.3, reefer: true, temperature: 4, customs: 'inspection', priority: 'reefer', yardSlot: 'D05-R04-T1', lastEvent: '待海关查验' },
+  { id: 'MSCU-3311820', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'import', status: 'in-yard', weightT: 24.8, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'A01-R07-T2', lastEvent: '堆存于 A01-R07 第 2 层' },
+  { id: 'MSCU-5570264', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'import', status: 'in-yard', weightT: 23.9, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'A01-R07-T1', lastEvent: '堆存于 A01-R07 第 1 层' },
+  { id: 'FCIU-2041176', voyageId: 'VOY-AX7', size: '40', isoType: '45G1', direction: 'import', status: 'in-yard', weightT: 25.0, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'B07-R03-T1', lastEvent: '堆存于 B07-R03 底层' },
+  { id: 'TEMU-6012945', voyageId: 'VOY-QF2', size: '20', isoType: '22G1', direction: 'export', status: 'in-yard', weightT: 11.6, reefer: false, customs: 'released', priority: 'normal', yardSlot: 'C03-R08-T1', lastEvent: '堆存于 C03-R08 底层' }
 ];
 export const appointments: GateAppointment[] = [
   { id: 'APT-9001', containerId: 'OOLU-7734201', truckNo: '沪A·7K229', driver: '陈海', type: 'dropoff', windowStart: iso(-14), windowEnd: iso(16), lane: 'south', status: 'checked-in', sealVerified: true, weightVerified: true },
@@ -42,14 +46,19 @@ export const equipment: Equipment[] = [
   { id: 'QC-07', name: '岸桥 QC-07', kind: 'quay-crane', status: 'working', location: 'B07 / MSC Aurora', battery: 96, queue: 4, movesPerHour: 31 },
   { id: 'YC-12', name: '场桥 YC-12', kind: 'yard-crane', status: 'working', location: 'B07-R03', battery: 72, queue: 9, movesPerHour: 24 },
   { id: 'YC-05', name: '场桥 YC-05', kind: 'yard-crane', status: 'available', location: 'C03-R06', battery: 88, queue: 3, movesPerHour: 27 },
+  { id: 'YC-09', name: '场桥 YC-09', kind: 'yard-crane', status: 'available', location: 'A01-R12', battery: 93, queue: 0, movesPerHour: 26 },
   { id: 'TT-31', name: '集卡 TT-31', kind: 'terminal-truck', status: 'working', location: '南闸口', battery: 61, queue: 2, movesPerHour: 8 },
   { id: 'RS-02', name: '正面吊 RS-02', kind: 'reach-stacker', status: 'maintenance', location: 'D05', battery: 34, queue: 0, movesPerHour: 14 }
 ];
 export const tasks: YardTask[] = [
   { id: 'TASK-101', kind: 'deliver', containerId: 'MSCU-4829017', from: 'A01-R07-T3', to: '南闸口', equipmentId: 'YC-12', priority: 92, status: 'assigned', scheduledAt: iso(12), blockingReasons: [], estimatedMinutes: 18 },
-  { id: 'TASK-102', kind: 'rehandle', containerId: 'EISU-1288420', from: 'B07-R03-T2', to: 'D05-R05-T1', equipmentId: 'YC-12', priority: 88, status: 'queued', scheduledAt: iso(24), blockingReasons: ['查验区插件余量接近阈值'], estimatedMinutes: 26 },
+  { id: 'TASK-102', kind: 'rehandle', containerId: 'EISU-1288420', from: 'B07-R03-T2', to: 'B07-R12-T1', equipmentId: 'YC-12', priority: 88, status: 'queued', scheduledAt: iso(24), blockingReasons: ['查验区插件余量接近阈值'], estimatedMinutes: 26 },
   { id: 'TASK-103', kind: 'inspect', containerId: 'TGHU-9831204', from: 'D05-R02-T1', to: 'D05-R02-T1', priority: 125, status: 'blocked', scheduledAt: iso(4), blockingReasons: ['RS-02 维护中', '待海关查验窗口'], estimatedMinutes: 32 },
-  { id: 'TASK-104', kind: 'load', containerId: 'FCIU-9920310', from: 'C03-R04-T2', to: 'B07 / VOY-QF2', equipmentId: 'YC-05', priority: 75, status: 'queued', scheduledAt: iso(76), blockingReasons: [], estimatedMinutes: 21 }
+  { id: 'TASK-104', kind: 'load', containerId: 'FCIU-9920310', from: 'C03-R04-T1', to: 'B07 / VOY-QF2', equipmentId: 'YC-05', priority: 75, status: 'queued', scheduledAt: iso(76), blockingReasons: [], estimatedMinutes: 21 },
+  { id: 'TASK-105', kind: 'deliver', containerId: 'MSCU-3311820', from: 'A01-R07-T2', to: '北闸口', equipmentId: 'YC-12', priority: 64, status: 'queued', scheduledAt: iso(30), blockingReasons: [], estimatedMinutes: 17 },
+  { id: 'TASK-106', kind: 'rehandle', containerId: 'FCIU-2041176', from: 'B07-R03-T1', to: 'B07-R11-T1', equipmentId: 'YC-12', priority: 70, status: 'queued', scheduledAt: iso(20), blockingReasons: [], estimatedMinutes: 12 },
+  { id: 'TASK-107', kind: 'rehandle', containerId: 'TEMU-6012945', from: 'C03-R08-T1', to: 'C03-R09-T1', priority: 75, status: 'queued', scheduledAt: iso(60), blockingReasons: [], estimatedMinutes: 11 },
+  { id: 'TASK-108', kind: 'deliver', containerId: 'MSCU-4829017', from: 'A01-R07-T3', to: '南闸口', priority: 60, status: 'queued', scheduledAt: iso(40), blockingReasons: ['与 TASK-101 重复计划，等待合并'], estimatedMinutes: 18 }
 ];
 export const auditEvents: AuditEvent[] = [{ id: 'AUD-500', actor: '中控调度员', action: 'REPLAN', entity: 'voyage', entityId: 'VOY-AX7', at: new Date(start - 20 * 60000).toISOString(), details: '因 QC-07 瞬时降速，重新计算 14 个高优先级作业' }];
 
@@ -86,7 +95,7 @@ export function createAppointment(input: Omit<GateAppointment, 'id' | 'status' |
   const item: GateAppointment = { ...input, id: `APT-${Date.now()}`, status: 'booked', sealVerified: false, weightVerified: false }; appointments.unshift(item); container.appointmentId = item.id; return item;
 }
 export function updateAppointment(id: string, patch: Partial<Pick<GateAppointment, 'status' | 'sealVerified' | 'weightVerified' | 'exception'>>) { const item = appointments.find(a => a.id === id); if (!item) return undefined; Object.assign(item, patch); const container = containers.find(c => c.id === item.containerId); if (item.status === 'checked-in' && container) container.status = 'at-gate'; if (item.status === 'completed' && container) container.status = item.type === 'pickup' ? 'released' : 'in-yard'; auditEvents.unshift({ id: `AUD-${Date.now()}`, actor: '闸口值班员', action: 'GATE_UPDATE', entity: 'appointment', entityId: id, at: new Date().toISOString(), details: JSON.stringify(patch) }); return item; }
-export function assignTask(id: string, equipmentId: string) { const task = tasks.find(item => item.id === id); const machine = equipment.find(item => item.id === equipmentId); if (!task || !machine) return undefined; const blockingReasons = [...task.blockingReasons]; if (machine.status === 'maintenance' || machine.status === 'offline') blockingReasons.push(`${machine.name} 当前不可用`); if (task.kind === 'inspect' && machine.kind !== 'reach-stacker') blockingReasons.push('查验作业需要正面吊或专用设备'); task.equipmentId = equipmentId; task.status = blockingReasons.length ? 'blocked' : 'assigned'; task.blockingReasons = blockingReasons; auditEvents.unshift({ id: `AUD-${Date.now()}`, actor: '中控调度员', action: 'ASSIGN_TASK', entity: 'yard-task', entityId: id, at: new Date().toISOString(), details: `${equipmentId} -> ${task.containerId}` }); return task; }
+export function assignTask(id: string, equipmentId: string) { const task = tasks.find(item => item.id === id); const machine = equipment.find(item => item.id === equipmentId); if (!task || !machine) return undefined; const lock = taskWaveLock(task.id); if (lock) throw new Error(lock); const blockingReasons = [...task.blockingReasons]; if (machine.status === 'maintenance' || machine.status === 'offline') blockingReasons.push(`${machine.name} 当前不可用`); if (task.kind === 'inspect' && machine.kind !== 'reach-stacker') blockingReasons.push('查验作业需要正面吊或专用设备'); task.equipmentId = equipmentId; task.status = blockingReasons.length ? 'blocked' : 'assigned'; task.blockingReasons = blockingReasons; auditEvents.unshift({ id: `AUD-${Date.now()}`, actor: '中控调度员', action: 'ASSIGN_TASK', entity: 'yard-task', entityId: id, at: new Date().toISOString(), details: `${equipmentId} -> ${task.containerId}` }); return task; }
 export function containerDetail(id: string) { const container = containers.find(item => item.id === id); if (!container) return undefined; return { container, voyage: voyages.find(v => v.id === container.voyageId), appointment: appointments.find(a => a.id === container.appointmentId), plan: containerPlan(id), tasks: tasks.filter(t => t.containerId === id) }; }
 
 export type ContainerInput = Omit<Container, 'lastEvent' | 'appointmentId'> & { appointmentId?: string };
@@ -96,6 +105,11 @@ export type TaskInput = Pick<YardTask, 'kind' | 'containerId' | 'from' | 'to' | 
 function recordAudit(action: string, entity: string, entityId: string, details: string) {
   auditEvents.unshift({ id: `AUD-${Date.now()}`, actor: '中控调度员', action, entity, entityId, at: new Date().toISOString(), details });
 }
+
+// 波次模块（waves.ts）在加载时注册任务锁检查，防止领域层与波次模块循环依赖
+let taskLockChecker: ((taskId: string) => string | undefined) | undefined;
+export function registerTaskLockChecker(checker: (taskId: string) => string | undefined) { taskLockChecker = checker; }
+export function taskWaveLock(taskId: string) { return taskLockChecker?.(taskId); }
 
 export function createContainer(input: ContainerInput) {
   const id = input.id.trim().toUpperCase();
@@ -131,6 +145,8 @@ export function updateContainer(id: string, patch: Partial<Omit<Container, 'id' 
 export function deleteContainer(id: string) {
   const index = containers.findIndex(item => item.id === id);
   if (index < 0) return undefined;
+  const locked = tasks.filter(task => task.containerId === id).map(task => taskWaveLock(task.id)).find(Boolean);
+  if (locked) throw new Error(locked);
   const [item] = containers.splice(index, 1);
   const removedAppointments = appointments.filter(appointment => appointment.containerId === id);
   for (const appointment of removedAppointments) appointments.splice(appointments.indexOf(appointment), 1);
@@ -178,11 +194,14 @@ export function deleteGateAppointment(id: string) {
   return item;
 }
 
+let yardTaskSeq = 1000;
+function nextTaskId() { yardTaskSeq += 1; return `TASK-${Date.now()}-${yardTaskSeq}`; }
+
 export function createYardTask(input: TaskInput) {
   if (!containers.some(container => container.id === input.containerId)) throw new Error('关联箱号不存在');
   if (input.priority < 1 || input.priority > 100) throw new Error('优先级范围为 1–100');
   if (input.estimatedMinutes <= 0) throw new Error('预计作业时长必须大于 0');
-  const item: YardTask = { ...input, id: `TASK-${Date.now()}`, status: input.equipmentId ? 'assigned' : 'queued', blockingReasons: [], scheduledAt: input.scheduledAt };
+  const item: YardTask = { ...input, id: nextTaskId(), status: input.equipmentId ? 'assigned' : 'queued', blockingReasons: [], scheduledAt: input.scheduledAt };
   tasks.unshift(item);
   recordAudit('CREATE', 'yard-task', item.id, `创建 ${input.kind} 任务，关联 ${input.containerId}`);
   return item;
@@ -191,6 +210,8 @@ export function createYardTask(input: TaskInput) {
 export function updateYardTask(id: string, patch: Partial<TaskInput & Pick<YardTask, 'status' | 'blockingReasons'>>) {
   const item = tasks.find(task => task.id === id);
   if (!item) return undefined;
+  const lock = taskWaveLock(item.id);
+  if (lock) throw new Error(lock);
   if (patch.containerId && !containers.some(container => container.id === patch.containerId)) throw new Error('关联箱号不存在');
   if (patch.priority !== undefined && (patch.priority < 1 || patch.priority > 100)) throw new Error('优先级范围为 1–100');
   Object.assign(item, patch);
@@ -199,6 +220,8 @@ export function updateYardTask(id: string, patch: Partial<TaskInput & Pick<YardT
 }
 
 export function deleteYardTask(id: string) {
+  const lock = taskWaveLock(id);
+  if (lock) throw new Error(lock);
   const index = tasks.findIndex(item => item.id === id);
   if (index < 0) return undefined;
   const [item] = tasks.splice(index, 1);
